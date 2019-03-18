@@ -837,7 +837,7 @@ pub enum Variants {
     },
 
     /// Multiple cases distinguished by a niche (values invalid for a type):
-    /// the variant `dataful_variant` contains a niche at an arbitrary
+    /// the variant `longest_variant` contains a niche at an arbitrary
     /// offset (field 0 of the enum), which for a variant with discriminant
     /// `d` is set to `(d - niche_variants.start).wrapping_add(niche_start)`.
     ///
@@ -845,7 +845,7 @@ pub enum Variants {
     /// `None` has a null pointer for the second tuple field, and
     /// `Some` is the identity function (with a non-null reference).
     NicheFilling {
-        dataful_variant: VariantIdx,
+        longest_variant: VariantIdx,
         niche_variants: RangeInclusive<VariantIdx>,
         niche: Scalar,
         niche_start: u128,

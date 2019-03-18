@@ -831,61 +831,101 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
 
                 // Niche-filling enum optimization.
                 if !def.repr.inhibit_enum_layout_opt() && no_explicit_discriminants {
-                    let mut dataful_variant = None;
-                    let mut niche_variants = VariantIdx::MAX..=VariantIdx::new(0);
+                    'niche_filling_optimization: loop {
 
-                    // Find one non-ZST variant.
-                    'variants: for (v, fields) in variants.iter_enumerated() {
-                        if absent(fields) {
-                            continue 'variants;
-                        }
-                        for f in fields {
-                            if !f.is_zst() {
-                                if dataful_variant.is_none() {
-                                    dataful_variant = Some(v);
-                                    continue 'variants;
-                                } else {
-                                    dataful_variant = None;
-                                    break 'variants;
-                                }
+                        let mut align = dl.aggregate_align;
+                        let st = variants.iter_enumerated().map(|(j, v)| {
+                            let mut st = univariant_uninterned(v,
+                                                               &def.repr, StructKind::AlwaysSized)?;
+                            st.variants = Variants::Single { index: j };
+
+                            align = align.max(st.align);
+
+                            Ok(st)
+                        }).collect::<Result<IndexVec<VariantIdx, _>, _>>()?;
+
+                        // Find one variant that is longer than all others
+                        let mut longest_variant = None;
+                        let mut longest_variant_size = Size::ZERO;
+                        let mut second_longest_variant_size = Size::ZERO;
+                        for (index, xxx) in st.iter_enumerated() {
+                            // xxx = LayoutDetails?
+
+                            if xxx.size > longest_variant_size {
+                                second_longest_variant_size = longest_variant_size;
+                                longest_variant_size = xxx.size;
+                                longest_variant = Some(index);
+                            } else if xxx.size == longest_variant_size {
+                                // We can't do the optimization if there are two longest variants
+                                longest_variant = None;
+                            } else if xxx.size > second_longest_variant_size {
+                                second_longest_variant_size = xxx.size;
                             }
                         }
-                        niche_variants = *niche_variants.start().min(&v)..=v;
-                    }
 
-                    if niche_variants.start() > niche_variants.end() {
-                        dataful_variant = None;
-                    }
+                        let longest_variant = match longest_variant {
+                            Some(longest_variant) => longest_variant,
+                            None => break 'niche_filling_optimization,
+                        };
 
-                    if let Some(i) = dataful_variant {
+                        // TODO: Do the following differently?
+                        let mut niche_variants = VariantIdx::MAX..=VariantIdx::new(0);
+                        for (index, _) in variants.iter_enumerated() {
+                            if index != longest_variant {
+                                niche_variants = *niche_variants.start().min(&index)..=index;
+                            }
+                        }
+
+                        if niche_variants.start() > niche_variants.end() {
+                            break 'niche_filling_optimization;
+                        }
+
+                        dbg!(longest_variant);
+                        dbg!(longest_variant_size);
+                        dbg!(second_longest_variant_size);
+
                         let count = (
                             niche_variants.end().as_u32() - niche_variants.start().as_u32() + 1
                         ) as u128;
-                        for (field_index, &field) in variants[i].iter().enumerate() {
+
+                        // Find field with that has niche with enough unused values to represent
+                        // other variants and at the same time all other variants can fit in front
+                        // of it.
+                        // TODO: Also implement fitting other variants behind it!
+                        for (field_index, &field) in variants[longest_variant].iter().enumerate() {
                             let niche = match self.find_niche(field)? {
                                 Some(niche) => niche,
                                 _ => continue,
                             };
+
+//                            if niche.available < variants.len() as u128 - 1 {
+//                                // The other variants could not fit into this niche
+//                                continue;
+//                            }
+
+
+
                             let (niche_start, niche_scalar) = match niche.reserve(self, count) {
                                 Some(pair) => pair,
                                 None => continue,
                             };
 
-                            let mut align = dl.aggregate_align;
-                            let st = variants.iter_enumerated().map(|(j, v)| {
-                                let mut st = univariant_uninterned(v,
-                                    &def.repr, StructKind::AlwaysSized)?;
-                                st.variants = Variants::Single { index: j };
 
-                                align = align.max(st.align);
+//                            if field.offset() < second_longest_variant_size {
+//                                // Check if others can fit in front of this
+//                                continue;
+//                            }
 
-                                Ok(st)
-                            }).collect::<Result<IndexVec<VariantIdx, _>, _>>()?;
+                            let offset = st[longest_variant].fields.offset(field_index) + niche.offset;
+                            let size = st[longest_variant].size;
 
-                            let offset = st[i].fields.offset(field_index) + niche.offset;
-                            let size = st[i].size;
+                            if offset < second_longest_variant_size {
+                                // Check if others can fit in front of this
+                                continue;
+                            }
+                            dbg!(offset);
 
-                            let mut abi = match st[i].abi {
+                            let mut abi = match st[longest_variant].abi {
                                 Abi::Scalar(_) => Abi::Scalar(niche_scalar.clone()),
                                 Abi::ScalarPair(ref first, ref second) => {
                                     // We need to use scalar_unit to reset the
@@ -914,7 +954,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
 
                             return Ok(tcx.intern_layout(LayoutDetails {
                                 variants: Variants::NicheFilling {
-                                    dataful_variant: i,
+                                    longest_variant,
                                     niche_variants,
                                     niche: niche_scalar,
                                     niche_start,
@@ -928,8 +968,132 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                                 size,
                                 align,
                             }));
+
                         }
+
+                        break 'niche_filling_optimization;
                     }
+
+
+//                    for (v, fields) in variants.iter_enumerated() {
+//                        for (field_index, &field) in fields.iter().enumerate() {
+//                            let niche = match self.find_niche(field)? {
+//                                Some(niche) => niche,
+//                                _ => continue,
+//                            };
+//
+//                            if niche.available < variants.len() as u128 - 1 {
+//                                // The other variants could not fit into this niche
+//                                continue;
+//                            }
+//
+//                            // Check
+//                        }
+//                    }
+
+
+//
+//
+//
+//
+//                    let mut niche_variants = VariantIdx::MAX..=VariantIdx::new(0);
+//
+//                    // Find one non-ZST variant.
+//                    'variants: for (v, fields) in variants.iter_enumerated() {
+//                        if absent(fields) {
+//                            continue 'variants;
+//                        }
+//                        for f in fields {
+//                            if !f.is_zst() {
+//                                if longest_variant.is_none() {
+//                                    longest_variant = Some(v);
+//                                    continue 'variants;
+//                                } else {
+//                                    longest_variant = None;
+//                                    break 'variants;
+//                                }
+//                            }
+//                        }
+//                        niche_variants = *niche_variants.start().min(&v)..=v;
+//                    }
+//
+//                    if niche_variants.start() > niche_variants.end() {
+//                        longest_variant = None;
+//                    }
+//
+//                    if let Some(i) = longest_variant {
+//                        let count = (
+//                            niche_variants.end().as_u32() - niche_variants.start().as_u32() + 1
+//                        ) as u128;
+//                        for (field_index, &field) in variants[i].iter().enumerate() {
+//                            let niche = match self.find_niche(field)? {
+//                                Some(niche) => niche,
+//                                _ => continue,
+//                            };
+//                            let (niche_start, niche_scalar) = match niche.reserve(self, count) {
+//                                Some(pair) => pair,
+//                                None => continue,
+//                            };
+//
+//                            let mut align = dl.aggregate_align;
+//                            let st = variants.iter_enumerated().map(|(j, v)| {
+//                                let mut st = univariant_uninterned(v,
+//                                    &def.repr, StructKind::AlwaysSized)?;
+//                                st.variants = Variants::Single { index: j };
+//
+//                                align = align.max(st.align);
+//
+//                                Ok(st)
+//                            }).collect::<Result<IndexVec<VariantIdx, _>, _>>()?;
+//
+//                            let offset = st[i].fields.offset(field_index) + niche.offset;
+//                            let size = st[i].size;
+//
+//                            let mut abi = match st[i].abi {
+//                                Abi::Scalar(_) => Abi::Scalar(niche_scalar.clone()),
+//                                Abi::ScalarPair(ref first, ref second) => {
+//                                    // We need to use scalar_unit to reset the
+//                                    // valid range to the maximal one for that
+//                                    // primitive, because only the niche is
+//                                    // guaranteed to be initialised, not the
+//                                    // other primitive.
+//                                    if offset.bytes() == 0 {
+//                                        Abi::ScalarPair(
+//                                            niche_scalar.clone(),
+//                                            scalar_unit(second.value),
+//                                        )
+//                                    } else {
+//                                        Abi::ScalarPair(
+//                                            scalar_unit(first.value),
+//                                            niche_scalar.clone(),
+//                                        )
+//                                    }
+//                                }
+//                                _ => Abi::Aggregate { sized: true },
+//                            };
+//
+//                            if st.iter().all(|v| v.abi.is_uninhabited()) {
+//                                abi = Abi::Uninhabited;
+//                            }
+//
+//                            return Ok(tcx.intern_layout(LayoutDetails {
+//                                variants: Variants::NicheFilling {
+//                                    longest_variant: i,
+//                                    niche_variants,
+//                                    niche: niche_scalar,
+//                                    niche_start,
+//                                    variants: st,
+//                                },
+//                                fields: FieldPlacement::Arbitrary {
+//                                    offsets: vec![offset],
+//                                    memory_index: vec![0]
+//                                },
+//                                abi,
+//                                size,
+//                                align,
+//                            }));
+//                        }
+//                    }
                 }
 
                 let (mut min, mut max) = (i128::max_value(), i128::min_value());
@@ -1889,13 +2053,13 @@ impl<'a> HashStable<StableHashingContext<'a>> for Variants {
                 variants.hash_stable(hcx, hasher);
             }
             NicheFilling {
-                dataful_variant,
+                longest_variant,
                 ref niche_variants,
                 ref niche,
                 niche_start,
                 ref variants,
             } => {
-                dataful_variant.hash_stable(hcx, hasher);
+                longest_variant.hash_stable(hcx, hasher);
                 niche_variants.start().hash_stable(hcx, hasher);
                 niche_variants.end().hash_stable(hcx, hasher);
                 niche.hash_stable(hcx, hasher);

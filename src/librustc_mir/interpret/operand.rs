@@ -671,7 +671,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 (real_discr, index.0)
             },
             layout::Variants::NicheFilling {
-                dataful_variant,
+                longest_variant,
                 ref niche_variants,
                 niche_start,
                 ..
@@ -686,7 +686,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                         if !ptr_valid {
                             return err!(InvalidDiscriminant(raw_discr.erase_tag()));
                         }
-                        (dataful_variant.as_u32() as u128, dataful_variant)
+                        (longest_variant.as_u32() as u128, longest_variant)
                     },
                     ScalarMaybeUndef::Scalar(Scalar::Bits { bits: raw_discr, size }) => {
                         assert_eq!(size as u64, discr_val.layout.size.bytes());
@@ -701,7 +701,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                                 .variants.len());
                             (adjusted_discr, VariantIdx::from_usize(index))
                         } else {
-                            (dataful_variant.as_u32() as u128, dataful_variant)
+                            (longest_variant.as_u32() as u128, longest_variant)
                         }
                     },
                     ScalarMaybeUndef::Undef =>

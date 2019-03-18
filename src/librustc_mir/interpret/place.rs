@@ -974,7 +974,7 @@ where
                 self.write_scalar(Scalar::from_uint(discr_val, size), discr_dest)?;
             }
             layout::Variants::NicheFilling {
-                dataful_variant,
+                longest_variant,
                 ref niche_variants,
                 niche_start,
                 ..
@@ -982,7 +982,7 @@ where
                 assert!(
                     variant_index.as_usize() < dest.layout.ty.ty_adt_def().unwrap().variants.len(),
                 );
-                if variant_index != dataful_variant {
+                if variant_index != longest_variant {
                     let niche_dest =
                         self.place_field(dest, 0)?;
                     let niche_value = variant_index.as_u32() - niche_variants.start().as_u32();

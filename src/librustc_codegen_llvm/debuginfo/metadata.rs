@@ -1278,16 +1278,16 @@ impl EnumMemberDescriptionFactory<'ll, 'tcx> {
                 ref niche_variants,
                 niche_start,
                 ref variants,
-                dataful_variant,
+                longest_variant,
                 ref niche,
             } => {
                 if fallback {
-                    let variant = self.layout.for_variant(cx, dataful_variant);
+                    let variant = self.layout.for_variant(cx, longest_variant);
                     // Create a description of the non-null variant
                     let (variant_type_metadata, member_description_factory) =
                         describe_enum_variant(cx,
                                               variant,
-                                              &adt.variants[dataful_variant],
+                                              &adt.variants[longest_variant],
                                               OptimizedDiscriminant,
                                               self.containing_scope,
                                               self.span);
@@ -1360,7 +1360,7 @@ impl EnumMemberDescriptionFactory<'ll, 'tcx> {
                                                       variant_type_metadata,
                                                       member_descriptions);
 
-                        let niche_value = if i == dataful_variant {
+                        let niche_value = if i == longest_variant {
                             None
                         } else {
                             let value = (i.as_u32() as u128)

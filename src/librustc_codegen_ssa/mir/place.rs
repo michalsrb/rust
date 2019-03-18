@@ -243,7 +243,7 @@ impl<'a, 'tcx: 'a, V: CodegenObject> PlaceRef<'tcx, V> {
                 bx.intcast(lldiscr, cast_to, signed)
             }
             layout::Variants::NicheFilling {
-                dataful_variant,
+                longest_variant,
                 ref niche_variants,
                 niche_start,
                 ..
@@ -260,7 +260,7 @@ impl<'a, 'tcx: 'a, V: CodegenObject> PlaceRef<'tcx, V> {
                     let select_arg = bx.icmp(IntPredicate::IntEQ, lldiscr, niche_llval);
                     bx.select(select_arg,
                         bx.cx().const_uint(cast_to, niche_variants.start().as_u32() as u64),
-                        bx.cx().const_uint(cast_to, dataful_variant.as_u32() as u64))
+                        bx.cx().const_uint(cast_to, longest_variant.as_u32() as u64))
                 } else {
                     // Rebase from niche values to discriminant values.
                     let delta = niche_start.wrapping_sub(niche_variants.start().as_u32() as u128);
@@ -271,7 +271,7 @@ impl<'a, 'tcx: 'a, V: CodegenObject> PlaceRef<'tcx, V> {
                     let cast = bx.intcast(lldiscr, cast_to, false);
                     bx.select(select_arg,
                         cast,
-                        bx.cx().const_uint(cast_to, dataful_variant.as_u32() as u64))
+                        bx.cx().const_uint(cast_to, longest_variant.as_u32() as u64))
                 }
             }
         }
@@ -302,12 +302,12 @@ impl<'a, 'tcx: 'a, V: CodegenObject> PlaceRef<'tcx, V> {
                     ptr.align);
             }
             layout::Variants::NicheFilling {
-                dataful_variant,
+                longest_variant,
                 ref niche_variants,
                 niche_start,
                 ..
             } => {
-                if variant_index != dataful_variant {
+                if variant_index != longest_variant {
                     if bx.cx().sess().target.target.arch == "arm" ||
                        bx.cx().sess().target.target.arch == "aarch64" {
                         // Issue #34427: As workaround for LLVM bug on ARM,

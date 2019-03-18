@@ -452,7 +452,7 @@ impl<'tcx> LayoutLlvmExt<'tcx> for TyLayout<'tcx> {
 
             _ => {
                 let mut data_variant = match self.variants {
-                    layout::Variants::NicheFilling { dataful_variant, .. } => {
+                    layout::Variants::NicheFilling { longest_variant, .. } => {
                         // Only the niche itself is always initialized,
                         // so only check for a pointer at its offset.
                         //
@@ -465,7 +465,7 @@ impl<'tcx> LayoutLlvmExt<'tcx> for TyLayout<'tcx> {
                         // niches than just null (e.g., the first page
                         // of the address space, or unaligned pointers).
                         if self.fields.offset(0) == offset {
-                            Some(self.for_variant(cx, dataful_variant))
+                            Some(self.for_variant(cx, longest_variant))
                         } else {
                             None
                         }

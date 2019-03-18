@@ -140,6 +140,12 @@ fn main() {
             continue;
         }
 
+        // hack to avoid flag on openSUSE which is incompatible with GCC
+        if flag.starts_with("-W") && flag.contains("string-conversion") {
+            continue;
+        }
+
+
         cfg.flag(flag);
     }
 
